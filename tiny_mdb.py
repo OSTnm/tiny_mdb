@@ -9,7 +9,7 @@ MDB_FOLDER = 'mdbs'
 OUT_FOLDER = 'outputs'
 FORMAT_MDB = 'mdb'
 FORMAT_CSV = 'csv'
-EXCLUDE_COLUMN = ['Classification', 'SerialNumber', 'CellArea', 'Tmonicell', 'Operator', 'Temperature', 'E', 'Pmpp', 'Umpp', 'Impp', 'Jmpp', 'Jsc', 'URev1', 'URev2', 'Ivld1', 'Uvld1', 'Pvld1', 'Ivld2', 'Uvld2', 'Pvld2', 'IRevmax', 'URevmax', 'CellTyp', 'TestTime', 'TestDate']
+INCLUDED_COLUMN = ['Record', 'Charge', 'Date', 'BIN', 'Uoc', 'Isc', 'Rser', 'Rsh', 'FF', 'EFF', 'IRev1', 'IRev2']
 
 
 def output_to_file(f, output):
@@ -34,12 +34,13 @@ def parse_mdb(out_raw, out_summary, mdb):
     header = []
 
     # read mdb file
+    # mdb = mdb.encode('utf-8')
     records = io.read(mdb)
     line = next(records)
 
     # store header
     for elem in line:
-        if elem in EXCLUDE_COLUMN:
+        if elem not in INCLUDED_COLUMN:
             continue
         header.append(elem)
 
@@ -49,7 +50,7 @@ def parse_mdb(out_raw, out_summary, mdb):
     while line != None:
         data_line = []
         for elem in line:
-            if elem in EXCLUDE_COLUMN:
+            if elem not in INCLUDED_COLUMN:
                 continue
             charges.add(line['Charge'])
             data_line.append(line[elem])
@@ -89,6 +90,7 @@ def parse_mdb(out_raw, out_summary, mdb):
 
     # remove Charge Date BIN
     data3 = []
+    data4 = []
     for line in data2:
         temp = line
         line = line[4:]
@@ -104,9 +106,12 @@ def parse_mdb(out_raw, out_summary, mdb):
         if invalid:
             print('Warning: ' + str(temp) + ', Ignore!')
             continue
-        data3.append(list(map(float, line)))
+        temp = temp[:4]
+        temp.extend(list(map(float, line)))
+        data3.append(temp)
+        data4.append(list(map(float, line)))
 
-    summary = list(map(lambda x: sum(x)/len(x), zip(*data3)))
+    summary = list(map(lambda x: sum(x)/len(x), zip(*data4)))
 
     # write raw
     # write header
@@ -120,7 +125,7 @@ def parse_mdb(out_raw, out_summary, mdb):
     header.extend(['BIN invalid', 'Num'])
     out_summary.write(','.join(header) + '\n')
     # write average data
-    summary.extend([BIN_invalid_count, len(data3)])
+    summary.extend([BIN_invalid_count, len(data4)])
     out_summary.write(','.join(map(str, summary)) + '\n')
 
 def tiny_mdb():
