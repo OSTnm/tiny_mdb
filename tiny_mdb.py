@@ -42,8 +42,8 @@ def is_float(str):
         return False
 
 class Mdb(object):
-    def __init__(self, name, data=[]):
-        self._data = data
+    def __init__(self, name, data=None):
+        self._data = data if data != None else []
         self.bin_invalid = 0
         self.name = name
 
@@ -87,7 +87,6 @@ class Mdb(object):
                 self._data.append(row)
         except:
             pass
-        print(len(self.data))
 
     def write(self):
         return self.__write_to_csv()
@@ -108,31 +107,23 @@ class Mdb(object):
 def mdbp(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
+        mdb = args[0]
+        bcolors.printc(bcolors.OKGREEN, mdb.name + ' apply ' + str(func.__name__) + ' ...')
         return func(*args, **kwargs)
     return wrapper
 
-def mdbp_common(mdb, policy):
-    # if type(data[0]) is not dict:
-    #     rc = []
-    #     for sub in data:
-    #         rc.append(mdbp_common(sub, mdb, policy))
-    #     return rc
-
-    return policy(mdb)
-
-def __mdbp_filter_column(mdb):
+@mdbp
+def mdbp_filter_column(mdb):
     data = mdb.data
     rc = []
     for row in data:
         out_row = {k: v for k, v in row.items() if k in INCLUDED_COLUMN}
         rc.append(out_row)
     mdb.data = rc
-    return
+    return mdb
 
-def mdbp_filter_column(mdb):
-    return mdbp_common(mdb, __mdbp_filter_column)
-
-def __mdbp_select_charge(mdb):
+@mdbp
+def mdbp_select_charge(mdb):
     rc = []
     data = mdb.data
 
@@ -156,12 +147,10 @@ def __mdbp_select_charge(mdb):
             continue
         rc.append(row)
     mdb.data = rc
-    return
+    return mdb
 
-def mdbp_select_charge(mdb):
-    return mdbp_common(mdb, __mdbp_select_charge)
-
-def __mdbp_filter_bin(mdb):
+@mdbp
+def mdbp_filter_bin(mdb):
     rc = []
     data = mdb.data
 
@@ -181,12 +170,13 @@ def __mdbp_filter_bin(mdb):
     bcolors.printc(bcolors.WARNING, 'BIN invalid: ' + str(count))
     mdb.set_bin_invalid(count)
     mdb.data = rc
-    return
+    return mdb
 
-def mdbp_filter_bin(mdb):
-    return mdbp_common(mdb, __mdbp_filter_bin)
+test_counter = 0
 
-def __mdbp_filter_invalid_value(mdb):
+@mdbp
+def mdbp_filter_invalid_value(mdb):
+    global test_counter
     keys = ['Uoc', 'Isc', 'Rser', 'Rsh', 'FF', 'EFF', 'IRev1', 'IRev2']
     rc = []
     data = mdb.data
@@ -214,10 +204,28 @@ def __mdbp_filter_invalid_value(mdb):
         rc.append(row)
 
     mdb.data = rc
-    return
+    test_counter = test_counter + 1
+    return mdb
 
-def mdbp_filter_zero_negative_value(mdb):
-    return mdbp_common(mdb, __mdbp_filter_invalid_value)
+@mdbp
+def mdbp_test_split(mdb):
+    data = mdb.data
+    data1 = data[0:5000]
+    data2 = data[5000:]
+
+    m1 = Mdb(mdb.name + '_A', data = data1)
+    m2 = Mdb(mdb.name + '_B', data = data2)
+    return [m1, m2]
+
+@mdbp
+def mdbp_test_split2(mdb):
+    data = mdb.data
+    data1 = data[0:2000]
+    data2 = data[2000:]
+
+    m1 = Mdb(mdb.name + '_A', data = data1)
+    m2 = Mdb(mdb.name + '_B', data = data2)
+    return [m1, m2]
 
 class MdbPolicy(object):
     def __init__(self):
@@ -230,16 +238,30 @@ class MdbPolicy(object):
         self.policys.extend(policys)
 
     def execute(self, mdb):
-        for policy in self.policys:
-            policy(mdb)
-        return
+        self.mdb = [mdb, ]
+
+        for index in range(len(self.policys)):
+            mdbs = self.policys[index](mdb)
+            if mdbs is mdb:
+                continue
+            if type(mdbs) is not list:
+                raise ValueError("invalid data!")
+            self.mdb = []
+            for i in mdbs:
+                p = MdbPolicy()
+                p.register_groups(self.policys[index + 1:])
+                self.mdb.extend(p.execute(i))
+            break
+        return self.mdb
 
 def tiny_mdb():
     builtin_policys = [
+        # mdbp_test_split,
+        # mdbp_test_split2,
         mdbp_filter_column,
         mdbp_select_charge,
         mdbp_filter_bin,
-        mdbp_filter_zero_negative_value,
+        mdbp_filter_invalid_value,
     ]
 
     p = MdbPolicy()
@@ -249,9 +271,10 @@ def tiny_mdb():
     for mdb in glob.glob(MDB_FOLDER + r'/*.mdb'):
         m = Mdb(mdb)
         m.read()
-        p.execute(m)
-        m.write()
-        summary.append(m.summary())
+        n = p.execute(m)
+        for i in n:
+            i.write()
+            summary.append(i.summary())
 
     if len(summary) == 0:
         return
