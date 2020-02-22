@@ -3,6 +3,11 @@
 
 Tiny Mdb generate csv based on mdb with builtin policies.
 
+| Platform                       | Test Result |
+| ------------------------------ | ----------- |
+| Win10 VM                       | ✔           |
+| Mac                            | ✔           |
+
 ## Usage
 
 - put mdb files to mdbs/
