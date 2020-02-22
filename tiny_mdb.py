@@ -238,6 +238,9 @@ def tiny_mdb():
         m.write()
         summary.append(m.summary())
 
+    if len(summary) == 0:
+        return
+
     with open(OUT_SUMMARY, 'w', newline='') as f:
         bcolors.printc(bcolors.OKGREEN, 'write ' + OUT_SUMMARY + '...')
         writer = csv.DictWriter(f, fieldnames=list(summary[0].keys()))
