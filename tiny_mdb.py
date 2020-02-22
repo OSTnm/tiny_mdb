@@ -1,144 +1,249 @@
 import sys
 import os
+if sys.platform == 'win32':
+    sys.path.append('thirdparty')
+    os.environ['PATH'] = os.environ['PATH'] + './mdbtools-win/'
 import glob
 import shutil
-# import pyodbc
+import csv
 from meza import io
 
-MDB_FOLDER = 'mdbs'
-OUT_FOLDER = 'outputs'
-FORMAT_MDB = 'mdb'
-FORMAT_CSV = 'csv'
+MDB_FOLDER = 'mdbs/'
+OUT_FOLDER = 'outputs/'
+OUT_SUMMARY = 'outputs/results.csv'
+if sys.platform == 'win32':
+    MDB_FOLDER = 'mdbs\\'
+    OUT_FOLDER = 'outputs\\'
+
 INCLUDED_COLUMN = ['Record', 'Charge', 'Date', 'BIN', 'Uoc', 'Isc', 'Rser', 'Rsh', 'FF', 'EFF', 'IRev1', 'IRev2']
 
+class bcolors:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
+    if sys.platform == 'win32':
+        HEADER = OKBLUE = OKGREEN = WARNING = FAIL = ENDC = BOLD = UNDERLINE = ''
 
-def output_to_file(f, output):
-    rc = []
-    # x = 0
-    for i in output:
-        # if x is 0:
-        #     print(i)
-        #     x = x + 1
-        rc.append(','.join(map(str, i)))
-    return f.write('\n'.join(rc))
+    @staticmethod
+    def printc(color, string):
+        print(color + string + bcolors.ENDC)
 
-def iter_mdb(records):
+def is_float(str):
     try:
-        first = next(records)
-    except:
-        return None
-    return first
+        float(str)
+        return True
+    except ValueError:
+        return False
 
-def parse_mdb(out_raw, out_summary, mdb):
-    raw_data = []
-    header = []
+def mdbp_common(data, mdb, policy):
+    if len(data) == 0:
+        return
 
-    # read mdb file
-    # mdb = mdb.encode('utf-8')
-    records = io.read(mdb)
-    line = next(records)
+    if type(data[0]) is not dict:
+        rc = []
+        for sub in data:
+            rc.append(mdbp_common(sub, mdb, policy))
+        return rc
 
-    # store header
-    for elem in line:
-        if elem not in INCLUDED_COLUMN:
-            continue
-        header.append(elem)
+    return policy(data, mdb)
 
-    # print(header)
-    # store data
+def __mdbp_filter_column(data, mdb):
+    rc = []
+    for row in data:
+        out_row = {k: v for k, v in row.items() if k in INCLUDED_COLUMN}
+        rc.append(out_row)
+    return rc
+
+def mdbp_filter_column(data, mdb):
+    return mdbp_common(data, mdb, __mdbp_filter_column)
+
+def __mdbp_select_charge(data, mdb):
+    rc = []
+
     charges = set()
-    while line != None:
-        data_line = []
-        for elem in line:
-            if elem not in INCLUDED_COLUMN:
-                continue
-            charges.add(line['Charge'])
-            data_line.append(line[elem])
-        raw_data.append(data_line)
-        line = iter_mdb(records)
+    for row in data:
+        if 'Charge' not in row:
+            bcolors.printc(bcolors.FAIL, 'column Charge not found ')
+            raise
+        charges.add(row['Charge'])
 
-    # sort charge
     charges = list(charges)
     charges.sort(key=lambda x : len(x))
-    charges_len = len(charges[0])
-    for i in range(1, len(charges)):
-        if len(charges[i]) != charges_len:
-            charges = charges[:i]
-            break
-    print('select charges:')
+    shortest_len = len(charges[0])
+    charges = [i for i in charges if len(i) == shortest_len]
+    bcolors.printc(bcolors.OKGREEN, 'select charge:')
     for i in charges:
-        print(i + '   length: ' + str(len(i)))
+        bcolors.printc(bcolors.OKBLUE, i)
 
-    # filter charge
-    charge_index = header.index('Charge')
-    data = []
-    for line in raw_data:
-        if not line[charge_index] in charges:
+    for row in data:
+        if row['Charge'] not in charges:
             continue
-        data.append(line)
+        rc.append(row)
+    return rc
 
-    # filter BIN = 23 24
-    BIN_invalid_count = 0
-    BIN_index = header.index('BIN')
-    data2 = []
-    for line in data:
-        if 22 < int(float(line[BIN_index])):
-            BIN_invalid_count = BIN_invalid_count + 1
+def mdbp_select_charge(data, mdb):
+    return mdbp_common(data, mdb, __mdbp_select_charge)
+
+def __mdbp_filter_bin(data, mdb):
+    rc = []
+    if len(data) == 0:
+        return
+
+    if 'BIN' not in data[0]:
+        bcolors.printc(bcolors.FAIL, 'column BIN not found')
+        raise
+
+    count = 0
+    for row in data:
+        if 22 < float(row['BIN']):
+            count = count + 1
             continue
-        data2.append(line)
-    print('BIN invalid: ' + str(BIN_invalid_count))
+        rc.append(row)
+    bcolors.printc(bcolors.WARNING, 'BIN invalid: ' + str(count))
+    mdb.set_bin_invalid(count)
+    return rc
 
-    # remove Charge Date BIN
-    data3 = []
-    data4 = []
-    for line in data2:
-        temp = line
-        line = line[4:]
+def mdbp_filter_bin(data, mdb):
+    return mdbp_common(data, mdb, __mdbp_filter_bin)
 
+def __mdbp_filter_invalid_value(data, mdb):
+    keys = ['Uoc', 'Isc', 'Rser', 'Rsh', 'FF', 'EFF', 'IRev1', 'IRev2']
+    rc = []
+
+    if len(data) == 0:
+        return
+
+    for k in keys:
+        if k not in data[0]:
+            bcolors.printc(bcolors.FAIL, 'column ' + k + ' not found')
+            raise
+
+    for row in data:
         invalid = False
-        for elem in line:
-            if len(elem.strip()) == 0:
+        for k, v in row.items():
+            if k not in keys:
+                continue
+
+            if not is_float(v) or float(v) < 0:
                 invalid = True
-                break
-            if float(elem) < 0:
-                invalid = True
+                bcolors.printc(bcolors.WARNING, k + ':' + v + ' not valid')
                 break
         if invalid:
-            print('Warning: ' + str(temp) + ', Ignore!')
+            bcolors.printc(bcolors.WARNING, str(row) + ' Ignore')
             continue
-        temp = temp[:4]
-        temp.extend(list(map(float, line)))
-        data3.append(temp)
-        data4.append(list(map(float, line)))
+        rc.append(row)
 
-    summary = list(map(lambda x: sum(x)/len(x), zip(*data4)))
+    return rc
 
-    # write raw
-    # write header
-    out_raw.write(','.join(header) + '\n')
-    # write data
-    output_to_file(out_raw, data3)
+def mdbp_filter_zero_negative_value(data, mdb):
+    return mdbp_common(data, mdb, __mdbp_filter_invalid_value)
 
-    # write summary
-    # write summary header
-    header = header[4:]
-    header.extend(['BIN invalid', 'Num'])
-    out_summary.write(','.join(header) + '\n')
-    # write average data
-    summary.extend([BIN_invalid_count, len(data4)])
-    out_summary.write(','.join(map(str, summary)) + '\n')
+class MdbPolicy(object):
+    def __init__(self):
+        self.policys = []
+
+    def register(self, policy):
+        self.policys.append(policy)
+
+    def register_groups(self, policys):
+        self.policys.extend(policys)
+
+    def execute(self, data, mdb):
+        for policy in self.policys:
+            data = policy(data, mdb)
+        return data
+
+class Mdb(object):
+    # TODO: support multiplie demension
+    def __init__(self, name, policy):
+        self.data = []
+        self.policy = policy
+        self.bin_invalid = 0
+
+        if len(name) < len(MDB_FOLDER) + len('.mdb') or name[-4:] != '.mdb' or name.index(MDB_FOLDER) != 0:
+            print('invalid mdb file')
+            raise
+
+        self.name = name[len(MDB_FOLDER):-4]
+        bcolors.printc(bcolors.OKGREEN + bcolors.BOLD, 'read ' + name + '...')
+        #read mdb file
+        try:
+            for row in io.read(name):
+                self.data.append(row)
+        except:
+            pass
+
+    def process(self):
+        if self.policy is None:
+            return
+        self.data = self.policy.execute(self.data, self)
+
+    def set_bin_invalid(self, invalid):
+        self.bin_invalid = invalid
+
+    def write_to_csv(self, output_name, data):
+        if len(data) == 0:
+            return
+        if type(data[0]) is dict:
+            output_csv_name = OUT_FOLDER + output_name + '.csv'
+            output = open(output_csv_name, 'w')
+            bcolors.printc(bcolors.OKGREEN, 'write ' + output_csv_name + '...')
+            writer = csv.DictWriter(output, fieldnames=list(data[0].keys()))
+
+            writer.writeheader()
+            for row in data:
+                writer.writerow(row)
+            output.close()
+            return
+
+        for index in range(data):
+            self.write_to_csv(output_name + '_' + str(index), data[index])
+
+    def write(self):
+        return self.write_to_csv(self.name, self.data)
+
+    def summary(self):
+        rc = {}
+        keys = ['Uoc', 'Isc', 'Rser', 'Rsh', 'FF', 'EFF', 'IRev1', 'IRev2']
+
+        rc['File'] = self.name
+        rc['BIN invalid'] = self.bin_invalid
+        rc['Number'] = len(self.data)
+        for k in keys:
+            res = [sub[k] for sub in self.data]
+            res = list(map(float, res))
+            rc[k] = sum(res) / len(res)
+        return rc
 
 def tiny_mdb():
-    for mdb in glob.glob(MDB_FOLDER + r'/*.mdb'):
-        print('parse ' + mdb + '...')
+    builtin_policys = [
+        mdbp_filter_column,
+        mdbp_select_charge,
+        mdbp_filter_bin,
+        mdbp_filter_zero_negative_value,
+    ]
 
-        out_raw = mdb.replace(MDB_FOLDER, OUT_FOLDER).replace(FORMAT_MDB, FORMAT_CSV)
-        out_summary = out_raw + '_summary.csv'
-        out_raw = open(out_raw, 'w')
-        out_summary = open(out_summary, 'w')
-        parse_mdb(out_raw, out_summary, mdb)
-        out_raw.close()
-        out_summary.close()
+    p = MdbPolicy()
+    p.register_groups(builtin_policys)
+
+    summary = []
+    for mdb in glob.glob(MDB_FOLDER + r'/*.mdb'):
+        m = Mdb(mdb, p)
+        m.process()
+        m.write()
+        summary.append(m.summary())
+
+    with open(OUT_SUMMARY, 'w', newline='') as f:
+        bcolors.printc(bcolors.OKGREEN, 'write ' + OUT_SUMMARY + '...')
+        writer = csv.DictWriter(f, fieldnames=list(summary[0].keys()))
+        writer.writeheader()
+        for row in summary:
+            writer.writerow(row)
 
 if __name__ == '__main__':
     tiny_mdb()
