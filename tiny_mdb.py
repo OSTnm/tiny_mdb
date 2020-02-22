@@ -8,6 +8,7 @@ import glob
 import shutil
 import csv
 from meza import io
+import argparse
 
 MDB_FOLDER = 'mdbs/'
 OUT_FOLDER = 'outputs/'
@@ -254,7 +255,11 @@ class MdbPolicy(object):
             break
         return self.mdb
 
-def tiny_mdb():
+def mdbp_get_from_file(name):
+    policys = []
+    return policys
+
+def tiny_mdb(args):
     builtin_policys = [
         # mdbp_test_split,
         # mdbp_test_split2,
@@ -265,7 +270,7 @@ def tiny_mdb():
     ]
 
     p = MdbPolicy()
-    p.register_groups(builtin_policys)
+    p.register_groups(builtin_policys if args.policy is None else mdbp_get_from_file(args.policy))
 
     summary = []
     for mdb in glob.glob(MDB_FOLDER + r'/*.mdb'):
@@ -286,5 +291,13 @@ def tiny_mdb():
         for row in summary:
             writer.writerow(row)
 
+def cli_init():
+    parser = argparse.ArgumentParser(description='Simple tool for mdb data processing.')
+    parser.add_argument('-p', '--policy', nargs='?', help='specify policy file')
+
+    args = parser.parse_args()
+    return args
+
 if __name__ == '__main__':
-    tiny_mdb()
+    args = cli_init()
+    tiny_mdb(args)
