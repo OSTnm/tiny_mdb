@@ -45,8 +45,16 @@ def is_float(str):
 class Mdb(object):
     def __init__(self, name, data=None):
         self._data = data if data != None else []
-        self.bin_invalid = 0
         self.name = name
+        self.uoc_invalid = 0
+        self.isc_invalid = 0
+        self.rser_invalid = 0
+        self.rsh_invalid = 0
+        self.ff_invalid = 0
+        self.eff_invalid = 0
+        self.irev1_invalid = 0
+        self.irev2_invalid = 0
+        self.bin_invalid = 0
 
     @property
     def data(self):
@@ -58,9 +66,6 @@ class Mdb(object):
              raise ValueError("invalid data!")
         self._data = data
         return
-
-    def set_bin_invalid(self, invalid):
-        self.bin_invalid = invalid
 
     def __write_to_csv(self):
         output_csv_name = OUT_FOLDER + self.name + '.csv'
@@ -169,15 +174,12 @@ def mdbp_filter_bin(mdb):
             continue
         rc.append(row)
     bcolors.printc(bcolors.WARNING, 'BIN invalid: ' + str(count))
-    mdb.set_bin_invalid(count)
+    mdb.bin_invalid = count
     mdb.data = rc
     return mdb
 
-test_counter = 0
-
 @mdbp
 def mdbp_filter_invalid_value(mdb):
-    global test_counter
     keys = ['Uoc', 'Isc', 'Rser', 'Rsh', 'FF', 'EFF', 'IRev1', 'IRev2']
     rc = []
     data = mdb.data
@@ -205,28 +207,24 @@ def mdbp_filter_invalid_value(mdb):
         rc.append(row)
 
     mdb.data = rc
-    test_counter = test_counter + 1
     return mdb
 
-@mdbp
-def mdbp_test_split(mdb):
-    data = mdb.data
-    data1 = data[0:5000]
-    data2 = data[5000:]
-
-    m1 = Mdb(mdb.name + '_A', data = data1)
-    m2 = Mdb(mdb.name + '_B', data = data2)
-    return [m1, m2]
+def chunks(l, n):
+    n = max(1, n)
+    return (l[i:i+n] for i in range(0, len(l), n))
 
 @mdbp
-def mdbp_test_split2(mdb):
+def mdbp_split_num_test(mdb):
     data = mdb.data
-    data1 = data[0:2000]
-    data2 = data[2000:]
+    n = 500
+    mdbs = []
 
-    m1 = Mdb(mdb.name + '_A', data = data1)
-    m2 = Mdb(mdb.name + '_B', data = data2)
-    return [m1, m2]
+    datas = [data[i:i+n] for i in range(0, len(data), n)]
+    for index in range(len(datas)):
+        m = Mdb(mdb.name + '_' + str(index), data=datas[index])
+        mdbs.append(m)
+
+    return mdbs
 
 class MdbPolicy(object):
     def __init__(self):
@@ -255,23 +253,157 @@ class MdbPolicy(object):
             break
         return self.mdb
 
+def mdbp_func_sanity_check(func, name):
+    if func.__name__ != name:
+        bcolors.printc(bcolors.FAIL, ' expect ' + name + ' but get ' + func.__name__)
+        return False
+
+    if 'mdb' not in func.__code__.co_varnames:
+        bcolors.printc(bcolors.FAIL, name + ' parameters not match!')
+        return False
+    return True
+
+def mdbp_gen_split(name, key, limit):
+    return True
+
+def mdbp_gen_filter_val(name, key, limit):
+    condition = limit.split(':')[1]
+
+    code = \
+'''
+@mdbp
+def {0}(mdb):
+    keys = [{1}]
+    rc = []
+    data = mdb.data
+
+    if len(data) == 0:
+        return
+
+    for k in keys:
+        if k not in data[0]:
+            bcolors.printc(bcolors.FAIL, 'column ' + k + ' not found')
+            raise
+
+
+    count = 0
+    for row in data:
+        invalid = False
+        for k, v in row.items():
+            if k not in keys:
+                continue
+            if not is_float(v) or not (float(v) {2}):
+                invalid = True
+                bcolors.printc(bcolors.WARNING, k + ':' + v + ' not valid')
+                break
+        if invalid:
+            bcolors.printc(bcolors.WARNING, str(row) + ' Ignore')
+            count = count + 1
+            continue
+        rc.append(row)
+
+    mdb.{3} = count
+    mdb.data = rc
+    return mdb
+'''.format(name, key, condition, key.lower() + '_invalid')
+    exec(code)
+    func = locals()[name]
+    bcolors.printc(bcolors.OKGREEN + bcolors.BOLD, 'load policy - ' + name + ' ' + condition)
+    return func
+
+def mdbp_gen_filter_str(name, key, limit):
+    limits = ['MIN_LEN', 'MAX_LEN']
+    condition = limit.split(':')[1]
+
+    if condition not in limits:
+        raise RuntimeError("invalid policy - str!")
+    code = \
+    '''
+@mdbp
+def {0}(mdb):
+    rc = []
+    data = mdb.data
+    str_set = set()
+    for row in data:
+        if '{1}' not in row:
+            bcolors.printc(bcolors.FAIL, 'column {1} not found ')
+        raise
+    str_set.add(row['{1}'])
+    str_set = list(str_set)
+    str_set.sort(key=lambda x : len(x), reverse={2})
+    peak_len = len(str_set[0])
+    str_set = [i for i in str_set if len(i) == peak_len]
+    bcolors.printc(bcolors.OKGREEN, 'select {1}:')
+    for i in str_set:
+        bcolors.printc(bcolors.OKBLUE, i)
+    for row in data:
+        if row['{1}'] not in str_set:
+            continue
+        rc.append(row)
+    mdb.data = rc
+    return mdb
+    '''.format(name, key, 'False' if 'MIN_LEN' in limit else 'True')
+    exec(code)
+    func = locals()[name]
+    bcolors.printc(bcolors.OKGREEN + bcolors.BOLD, 'load policy - ' + name + ' ' + condition)
+    return func
+
+def mdbp_gen_filter_column(included):
+    code = 'INCLUDED_COLUMN = {}'.format(included)
+    exec(code)
+
+    bcolors.printc(bcolors.OKGREEN + bcolors.BOLD, 'load policy - mdbp_filter_column')
+    if not mdbp_func_sanity_check(mdbp_filter_column, 'mdbp_filter_column'):
+        raise RuntimeError("invalid policy!")
+    return mdbp_filter_column
+
 def mdbp_get_from_file(name):
     policys = []
+    policys_csv = []
+    gen_dict = {'STR':mdbp_gen_filter_str, 'VAL': mdbp_gen_filter_val}
+    name_dict = {'STR':'mdbp_filter_str', 'VAL':'mdbp_filter_val', 'SPLIT':'mdbp_split'}
+
+    with open(name, 'r', newline='') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            policys_csv.append(row)
+
+    if 0 == len(policys_csv):
+        raise RuntimeError("invalid policy!")
+
+    # gen column filter at first
+    filter_column = mdbp_gen_filter_column(list(policys_csv[0].keys()))
+    policys.append(filter_column)
+
+    # gen policy based on type
+    for index in range(len(policys_csv)):
+        suffix = '_row' + str(index) + '_'
+        for k, v in policys_csv[index].items():
+            if v.strip() == '':
+                continue
+            gen_type = v.split(':')[0]
+            if gen_type not in name_dict:
+                raise RuntimeError("unkown policy! " + v)
+            func_name = name_dict[gen_type] + suffix + k
+            gen_fun = gen_dict[gen_type](func_name, k, v)
+            if not mdbp_func_sanity_check(gen_fun, func_name):
+                raise RuntimeError("invalid policy!")
+
     return policys
 
 def tiny_mdb(args):
     builtin_policys = [
-        # mdbp_test_split,
-        # mdbp_test_split2,
         mdbp_filter_column,
         mdbp_select_charge,
         mdbp_filter_bin,
         mdbp_filter_invalid_value,
+        mdbp_split_num_test,
     ]
 
     p = MdbPolicy()
     p.register_groups(builtin_policys if args.policy is None else mdbp_get_from_file(args.policy))
-
+    # REMOVE ME
+    # exit(0)
     summary = []
     for mdb in glob.glob(MDB_FOLDER + r'/*.mdb'):
         m = Mdb(mdb)
@@ -291,6 +423,18 @@ def tiny_mdb(args):
         for row in summary:
             writer.writerow(row)
 
+welcome_msg = \
+r'''
+ _   _                           _ _
+| | (_)                         | | |
+| |_ _ _ __  _   _ _ __ ___   __| | |__
+| __| | '_ \| | | | '_ ` _ \ / _` | '_ \
+| |_| | | | | |_| | | | | | | (_| | |_) |
+ \__|_|_| |_|\__, |_| |_| |_|\__,_|_.__/
+              __/ |
+             |___/
+'''
+
 def cli_init():
     parser = argparse.ArgumentParser(description='Simple tool for mdb data processing.')
     parser.add_argument('-p', '--policy', nargs='?', help='specify policy file')
@@ -299,5 +443,6 @@ def cli_init():
     return args
 
 if __name__ == '__main__':
+    bcolors.printc(bcolors.BOLD, welcome_msg)
     args = cli_init()
     tiny_mdb(args)
