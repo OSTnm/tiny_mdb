@@ -9,6 +9,7 @@ import shutil
 import csv
 from meza import io
 import argparse
+import datetime
 
 MDB_FOLDER = 'mdbs/'
 OUT_FOLDER = 'outputs/'
@@ -102,12 +103,20 @@ class Mdb(object):
         keys = ['Uoc', 'Isc', 'Rser', 'Rsh', 'FF', 'EFF', 'IRev1', 'IRev2']
 
         rc['File'] = self.name
-        rc['BIN invalid'] = self.bin_invalid
         rc['Number'] = len(self.data)
         for k in keys:
             res = [sub[k] for sub in self.data]
             res = list(map(float, res))
             rc[k] = sum(res) / len(res)
+        rc['BIN invalid'] = self.bin_invalid
+        rc['Uoc invalid'] = self.uoc_invalid
+        rc['Isc invalid'] = self.isc_invalid
+        rc['Rser invalid'] = self.rser_invalid
+        rc['Rsh invalid'] = self.rsh_invalid
+        rc['FF invalid'] = self.ff_invalid
+        rc['EFF invalid'] = self.eff_invalid
+        rc['IRev1 invalid'] = self.irev1_invalid
+        rc['IRev2 invalid'] = self.irev2_invalid
         return rc
 
 def mdbp(func):
@@ -199,19 +208,16 @@ def mdbp_filter_invalid_value(mdb):
                 continue
             if not is_float(v) or float(v) < 0:
                 invalid = True
-                bcolors.printc(bcolors.WARNING, k + ':' + v + ' not valid')
+                # TBO, now it is quirk way
+                code = 'mdb.{0}_invalid = mdb.{0}_invalid + 1'.format(k.lower())
+                exec(code)
                 break
         if invalid:
-            bcolors.printc(bcolors.WARNING, str(row) + ' Ignore')
             continue
         rc.append(row)
 
     mdb.data = rc
     return mdb
-
-def chunks(l, n):
-    n = max(1, n)
-    return (l[i:i+n] for i in range(0, len(l), n))
 
 @mdbp
 def mdbp_split_num_test(mdb):
@@ -222,6 +228,36 @@ def mdbp_split_num_test(mdb):
     datas = [data[i:i+n] for i in range(0, len(data), n)]
     for index in range(len(datas)):
         m = Mdb(mdb.name + '_' + str(index), data=datas[index])
+        mdbs.append(m)
+
+    return mdbs
+
+@mdbp
+def mdbp_split_date_test(mdb):
+    data = mdb.data
+    mdbs = []
+
+    if len(data) == 0:
+        return mdb
+
+    start = 0
+    start_time = datetime.datetime.strptime(data[0]['Date'], "%d.%m.%Y-%H:%M:%S")
+    offset = 0
+    for index in range(1, len(data)):
+        now = datetime.datetime.strptime(data[index]['Date'], "%d.%m.%Y-%H:%M:%S")
+        diff = (now - start_time).total_seconds()
+        if diff < 2 * 60 * 60:
+            continue
+        sub = data[start:index]
+        m = Mdb(mdb.name + '_' + str(offset), data=sub)
+        mdbs.append(m)
+        offset = offset + 1
+        start = index
+        start_time = now
+
+    if start < len(data) - 1:
+        sub = data[start:]
+        m = Mdb(mdb.name + '_' + str(offset), data=sub)
         mdbs.append(m)
 
     return mdbs
@@ -397,7 +433,8 @@ def tiny_mdb(args):
         mdbp_select_charge,
         mdbp_filter_bin,
         mdbp_filter_invalid_value,
-        mdbp_split_num_test,
+        # mdbp_split_num_test,
+        mdbp_split_date_test,
     ]
 
     p = MdbPolicy()
