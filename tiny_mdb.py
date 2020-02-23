@@ -71,7 +71,7 @@ class Mdb(object):
 
     def __write_to_csv(self):
         output_csv_name = OUT_FOLDER + self.name + '.csv'
-        output = open(output_csv_name, 'w')
+        output = open(output_csv_name, 'w', newline='')
         bcolors.printc(bcolors.OKGREEN, 'write ' + output_csv_name + '...')
         writer = csv.DictWriter(output, fieldnames=list(self.data[0].keys()))
 
