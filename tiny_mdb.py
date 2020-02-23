@@ -9,6 +9,7 @@ import shutil
 import csv
 from meza import io
 import argparse
+from argparse import RawTextHelpFormatter
 import datetime
 
 MDB_FOLDER = 'mdbs/'
@@ -299,8 +300,70 @@ def mdbp_func_sanity_check(func, name):
         return False
     return True
 
+def mdbp_gen_split_num(name, key, limit):
+    condition = limit.split(':')[2]
+    code = \
+'''
+@mdbp
+def {0}(mdb):
+    data = mdb.data
+    n = {1}
+    mdbs = []
+
+    datas = [data[i:i+n] for i in range(0, len(data), n)]
+    for index in range(len(datas)):
+        m = Mdb(mdb.name + '_' + str(index), data=datas[index])
+        mdbs.append(m)
+
+    return mdbs
+'''.format(name, condition)
+    exec(code)
+    func = locals()[name]
+    bcolors.printc(bcolors.OKGREEN + bcolors.BOLD, 'load policy - ' + name + ' ' + limit)
+    return func
+
+def mdbp_gen_split_date(name, key, limit):
+    condition = limit.split(':')[2]
+    code = \
+'''
+@mdbp
+def {0}(mdb):
+    data = mdb.data
+    mdbs = []
+
+    if len(data) == 0:
+        return mdb
+
+    start = 0
+    start_time = datetime.datetime.strptime(data[0]['{1}'], "%d.%m.%Y-%H:%M:%S")
+    offset = 0
+    for index in range(1, len(data)):
+        now = datetime.datetime.strptime(data[index]['{1}'], "%d.%m.%Y-%H:%M:%S")
+        diff = (now - start_time).total_seconds()
+        if diff < {2} * 60 * 60:
+            continue
+        sub = data[start:index]
+        m = Mdb(mdb.name + '_' + str(offset), data=sub)
+        mdbs.append(m)
+        offset = offset + 1
+        start = index
+        start_time = now
+
+    if start < len(data) - 1:
+        sub = data[start:]
+        m = Mdb(mdb.name + '_' + str(offset), data=sub)
+        mdbs.append(m)
+
+    return mdbs
+'''.format(name, key, condition)
+    exec(code)
+    func = locals()[name]
+    bcolors.printc(bcolors.OKGREEN + bcolors.BOLD, 'load policy - ' + name + ' ' + limit + ' hours')
+    return func
+
 def mdbp_gen_split(name, key, limit):
-    return True
+    types = {'NUM' : mdbp_gen_split_num, 'DATE': mdbp_gen_split_date}
+    return types[limit.split(':')[1]](name, key, limit)
 
 def mdbp_gen_filter_val(name, key, limit):
     condition = limit.split(':')[1]
@@ -309,7 +372,7 @@ def mdbp_gen_filter_val(name, key, limit):
 '''
 @mdbp
 def {0}(mdb):
-    keys = [{1}]
+    keys = ['{1}']
     rc = []
     data = mdb.data
 
@@ -330,10 +393,8 @@ def {0}(mdb):
                 continue
             if not is_float(v) or not (float(v) {2}):
                 invalid = True
-                bcolors.printc(bcolors.WARNING, k + ':' + v + ' not valid')
                 break
         if invalid:
-            bcolors.printc(bcolors.WARNING, str(row) + ' Ignore')
             count = count + 1
             continue
         rc.append(row)
@@ -344,7 +405,7 @@ def {0}(mdb):
 '''.format(name, key, condition, key.lower() + '_invalid')
     exec(code)
     func = locals()[name]
-    bcolors.printc(bcolors.OKGREEN + bcolors.BOLD, 'load policy - ' + name + ' ' + condition)
+    bcolors.printc(bcolors.OKGREEN + bcolors.BOLD, 'load policy - ' + name + ' ' + limit)
     return func
 
 def mdbp_gen_filter_str(name, key, limit):
@@ -363,8 +424,8 @@ def {0}(mdb):
     for row in data:
         if '{1}' not in row:
             bcolors.printc(bcolors.FAIL, 'column {1} not found ')
-        raise
-    str_set.add(row['{1}'])
+            raise ValueError("invalid key!")
+        str_set.add(row['{1}'])
     str_set = list(str_set)
     str_set.sort(key=lambda x : len(x), reverse={2})
     peak_len = len(str_set[0])
@@ -381,7 +442,7 @@ def {0}(mdb):
     '''.format(name, key, 'False' if 'MIN_LEN' in limit else 'True')
     exec(code)
     func = locals()[name]
-    bcolors.printc(bcolors.OKGREEN + bcolors.BOLD, 'load policy - ' + name + ' ' + condition)
+    bcolors.printc(bcolors.OKGREEN + bcolors.BOLD, 'load policy - ' + name + ' ' + limit)
     return func
 
 def mdbp_gen_filter_column(included):
@@ -396,7 +457,7 @@ def mdbp_gen_filter_column(included):
 def mdbp_get_from_file(name):
     policys = []
     policys_csv = []
-    gen_dict = {'STR':mdbp_gen_filter_str, 'VAL': mdbp_gen_filter_val}
+    gen_dict = {'STR':mdbp_gen_filter_str, 'VAL': mdbp_gen_filter_val, 'SPLIT': mdbp_gen_split}
     name_dict = {'STR':'mdbp_filter_str', 'VAL':'mdbp_filter_val', 'SPLIT':'mdbp_split'}
 
     with open(name, 'r', newline='') as f:
@@ -424,6 +485,7 @@ def mdbp_get_from_file(name):
             gen_fun = gen_dict[gen_type](func_name, k, v)
             if not mdbp_func_sanity_check(gen_fun, func_name):
                 raise RuntimeError("invalid policy!")
+            policys.append(gen_fun)
 
     return policys
 
@@ -433,14 +495,12 @@ def tiny_mdb(args):
         mdbp_select_charge,
         mdbp_filter_bin,
         mdbp_filter_invalid_value,
+        # mdbp_split_date_test,
         # mdbp_split_num_test,
-        mdbp_split_date_test,
     ]
 
     p = MdbPolicy()
     p.register_groups(builtin_policys if args.policy is None else mdbp_get_from_file(args.policy))
-    # REMOVE ME
-    # exit(0)
     summary = []
     for mdb in glob.glob(MDB_FOLDER + r'/*.mdb'):
         m = Mdb(mdb)
@@ -472,10 +532,30 @@ r'''
              |___/
 '''
 
-def cli_init():
-    parser = argparse.ArgumentParser(description='Simple tool for mdb data processing.')
-    parser.add_argument('-p', '--policy', nargs='?', help='specify policy file')
+desc = \
+'''
+Simple tool for mdb data processing.
 
+Supported policy:
+.
+|-- SPLIT
+|   |-- DATE <hours> split per <hours> hours
+|   `-- NUM <number> split per <number> lines
+|-- STR
+|   |-- MAX_LEN      hit if string length is longest
+|   `-- MIN_LEN      hit if string length is shortest
+`-- VAL <condition>  hit if condition is True
+
+Sample:
+SPLIT:NUM:500 - split mdb per 500 lines
+SPLIT:DATE:2  - split mdb per 2 hours
+STR:MIN_LEN   - select longest string for specific key
+VAL:>0        - select float value > 0 for specific key
+'''
+
+def cli_init():
+    parser = argparse.ArgumentParser(description=desc, formatter_class=RawTextHelpFormatter)
+    parser.add_argument('-p', '--policy', nargs='?', help='specify policy file')
     args = parser.parse_args()
     return args
 
