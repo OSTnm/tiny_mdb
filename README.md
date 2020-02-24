@@ -32,12 +32,14 @@ Simple tool for mdb data processing.
 Supported policy:
 .
 |-- SPLIT
-|   |-- DATE <hours> split per <hours> hours
-|   `-- NUM <number> split per <number> lines
+|   |-- DATE <hours>          split per <hours> hours
+|   `-- NUM <number>          split per <number> lines
 |-- STR
-|   |-- MAX_LEN      hit if string length is longest
-|   `-- MIN_LEN      hit if string length is shortest
-`-- VAL <condition>  hit if condition is True
+|   |-- MAX_LEN               string length is longest
+|   |-- MIN_LEN               string length is shortest
+|   |-- GLOB <glob>           wildcard matching
+|   `-- REGEX <regex>         regular expression matching
+`-- VAL <condition>           condition matching
 
 Sample:
 SPLIT:NUM:500 - split mdb per 500 lines
