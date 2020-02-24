@@ -505,7 +505,6 @@ def {0}(mdb):
     mdb.data = rc
     return mdb
 '''.format(name, key, pattern)
-    print(code)
     exec(code)
     func = locals()[name]
     bcolors.printc(bcolors.OKGREEN + bcolors.BOLD, 'load policy - ' + name + ' ' + limit)
