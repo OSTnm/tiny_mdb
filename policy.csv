@@ -1,3 +1,2 @@
 Record,Charge,Date,BIN,Uoc,Isc,Rser,Rsh,FF,EFF,IRev1,IRev2
-,STR:MIN_LEN,,VAL:<22,VAL:>0,VAL:>0,VAL:>0,VAL:>0,VAL:>0,VAL:>0,VAL:>0,VAL:>0
-,,SPLIT:DATE:5,,,,,,,,,
+,STR:REGEX:.*190,,VAL:<22,VAL:>0,VAL:>0,VAL:>0,VAL:>0,VAL:>0,VAL:>0,VAL:>0,VAL:>0

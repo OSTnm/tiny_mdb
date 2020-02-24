@@ -11,6 +11,8 @@ from meza import io
 import argparse
 from argparse import RawTextHelpFormatter
 import datetime
+import re
+import fnmatch
 
 MDB_FOLDER = 'mdbs/'
 OUT_FOLDER = 'outputs/'
@@ -162,6 +164,30 @@ def mdbp_select_charge(mdb):
         if row['Charge'] not in charges:
             continue
         rc.append(row)
+    mdb.data = rc
+    return mdb
+
+@mdbp
+def mdbp_select_match(mdb):
+    rc = []
+    data = mdb.data
+
+    pattern = fnmatch.translate('*190*')
+
+    selected = set()
+    for row in data:
+        if 'Charge' not in row:
+            bcolors.printc(bcolors.FAIL, 'column Charge not found ')
+            raise ValueError('no such column')
+        if not re.fullmatch(pattern, row['Charge']):
+            continue
+        selected.add(row['Charge'])
+        rc.append(row)
+
+    bcolors.printc(bcolors.OKGREEN, 'select:')
+    for i in selected:
+        bcolors.printc(bcolors.OKBLUE, i)
+
     mdb.data = rc
     return mdb
 
@@ -408,7 +434,7 @@ def {0}(mdb):
     bcolors.printc(bcolors.OKGREEN + bcolors.BOLD, 'load policy - ' + name + ' ' + limit)
     return func
 
-def mdbp_gen_filter_str(name, key, limit):
+def mdbp_gen_filter_str_len(name, key, limit):
     limits = ['MIN_LEN', 'MAX_LEN']
     condition = limit.split(':')[1]
 
@@ -444,6 +470,54 @@ def {0}(mdb):
     func = locals()[name]
     bcolors.printc(bcolors.OKGREEN + bcolors.BOLD, 'load policy - ' + name + ' ' + limit)
     return func
+
+
+def mdbp_gen_filter_str_match(name, key, limit):
+    limits = ['GLOB', 'REGEX']
+    type_str, type_match, condition = limit.split(':')
+
+    pattern = '(\'' + condition + '\')'
+    if type_match == 'GLOB':
+        pattern = 'fnmatch.translate(\'' + condition + '\')'
+    code = \
+'''
+@mdbp
+def {0}(mdb):
+    rc = []
+    data = mdb.data
+
+    pattern = {2}
+
+    selected = set()
+    for row in data:
+        if '{1}' not in row:
+            bcolors.printc(bcolors.FAIL, 'column {1} not found ')
+            raise ValueError('no column - {1}')
+        if not re.fullmatch(pattern, row['{1}']):
+            continue
+        selected.add(row['{1}'])
+        rc.append(row)
+
+    bcolors.printc(bcolors.OKGREEN, 'select:')
+    for i in selected:
+        bcolors.printc(bcolors.OKBLUE, i)
+
+    mdb.data = rc
+    return mdb
+'''.format(name, key, pattern)
+    print(code)
+    exec(code)
+    func = locals()[name]
+    bcolors.printc(bcolors.OKGREEN + bcolors.BOLD, 'load policy - ' + name + ' ' + limit)
+    return func
+
+def mdbp_gen_filter_str(name, key, limit):
+    maps = {'MIN_LEN' : mdbp_gen_filter_str_len,
+            'MAX_LEN' : mdbp_gen_filter_str_len,
+            'GLOB'    : mdbp_gen_filter_str_match,
+            'REGEX'   : mdbp_gen_filter_str_match}
+
+    return maps[limit.split(':')[1]](name, key, limit)
 
 def mdbp_gen_filter_column(included):
     code = 'INCLUDED_COLUMN = {}'.format(included)
@@ -492,11 +566,12 @@ def mdbp_get_from_file(name):
 def tiny_mdb(args):
     builtin_policys = [
         mdbp_filter_column,
+        # mdbp_select_match,
         mdbp_select_charge,
         mdbp_filter_bin,
         mdbp_filter_invalid_value,
-        # mdbp_split_date_test,
-        # mdbp_split_num_test,
+        mdbp_split_date_test,
+        mdbp_split_num_test,
     ]
 
     p = MdbPolicy()
@@ -505,6 +580,8 @@ def tiny_mdb(args):
     for mdb in glob.glob(MDB_FOLDER + r'/*.mdb'):
         m = Mdb(mdb)
         m.read()
+        if len(m.data) == 0:
+            continue
         n = p.execute(m)
         for i in n:
             i.write()
@@ -522,14 +599,14 @@ def tiny_mdb(args):
 
 welcome_msg = \
 r'''
- _   _                           _ _
-| | (_)                         | | |
-| |_ _ _ __  _   _ _ __ ___   __| | |__
-| __| | '_ \| | | | '_ ` _ \ / _` | '_ \
-| |_| | | | | |_| | | | | | | (_| | |_) |
- \__|_|_| |_|\__, |_| |_| |_|\__,_|_.__/
-              __/ |
-             |___/
+  _____               _   _     __   __  __  __   ____    ____
+ |_ " _|     ___     | \ |"|    \ \ / /U|' \/ '|u|  _"\U | __")u
+   | |      |_"_|   <|  \| |>    \ V / \| |\/| |/| | | |\|  _ \/
+  /| |\      | |    U| |\  |u   U_|"|_u | |  | |U| |_| |\| |_) |
+ u |_|U    U/| |\u   |_| \_|      |_|   |_|  |_| |____/ u|____/
+ _// \\_.-,_|___|_,-.||   \\,-.-,//|(_ <<,-,,-.   |||_  _|| \\_
+(__) (__)\_)-' '-(_/ (_")  (_/ \_) (__) (./  \.) (__)_)(__) (__)
+
 '''
 
 desc = \
@@ -539,12 +616,14 @@ Simple tool for mdb data processing.
 Supported policy:
 .
 |-- SPLIT
-|   |-- DATE <hours> split per <hours> hours
-|   `-- NUM <number> split per <number> lines
+|   |-- DATE <hours>          split per <hours> hours
+|   `-- NUM <number>          split per <number> lines
 |-- STR
-|   |-- MAX_LEN      hit if string length is longest
-|   `-- MIN_LEN      hit if string length is shortest
-`-- VAL <condition>  hit if condition is True
+|   |-- MAX_LEN               string length is longest
+|   |-- MIN_LEN               string length is shortest
+|   |-- GLOB <glob>           wildcard matching
+|   `-- REGEX <regex>         regular expression matching
+`-- VAL <condition>           condition matching
 
 Sample:
 SPLIT:NUM:500 - split mdb per 500 lines
