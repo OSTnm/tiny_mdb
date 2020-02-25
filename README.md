@@ -51,6 +51,10 @@ optional arguments:
   -h, --help            show this help message and exit
   -p [POLICY], --policy [POLICY]
                         specify policy file
+  -s [SRC], --src [SRC]
+                        specify mdb folder
+  -d [DST], --dst [DST]
+                        specify output folder
 ```
 
 ## Upcoming

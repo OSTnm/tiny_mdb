@@ -16,10 +16,10 @@ import fnmatch
 
 MDB_FOLDER = 'mdbs/'
 OUT_FOLDER = 'outputs/'
-OUT_SUMMARY = 'outputs/results.csv'
 if sys.platform == 'win32':
     MDB_FOLDER = 'mdbs\\'
     OUT_FOLDER = 'outputs\\'
+OUT_SUMMARY = OUT_FOLDER + 'results.csv'
 
 INCLUDED_COLUMN = ['Record', 'Charge', 'Date', 'BIN', 'Uoc', 'Isc', 'Rser', 'Rsh', 'FF', 'EFF', 'IRev1', 'IRev2']
 
@@ -596,6 +596,26 @@ def tiny_mdb(args):
         for row in summary:
             writer.writerow(row)
 
+def tiny_mdb_env(args):
+    global MDB_FOLDER
+    global OUT_FOLDER
+    global OUT_SUMMARY
+    suffix = '/'
+    if sys.platform == 'win32':
+        suffix = '\\'
+
+    if args.src != None:
+        MDB_FOLDER = args.src
+    if args.dst != None:
+        OUT_FOLDER = args.dst
+
+    if MDB_FOLDER[-1] != suffix:
+        MDB_FOLDER = MDB_FOLDER + suffix
+    if OUT_FOLDER[-1] != suffix:
+        OUT_FOLDER = OUT_FOLDER + suffix
+
+    OUT_SUMMARY = OUT_FOLDER + 'results.csv'
+
 welcome_msg = \
 r'''
   _____               _   _     __   __  __  __   ____    ____
@@ -634,10 +654,13 @@ VAL:>0        - select float value > 0 for specific key
 def cli_init():
     parser = argparse.ArgumentParser(description=desc, formatter_class=RawTextHelpFormatter)
     parser.add_argument('-p', '--policy', nargs='?', help='specify policy file')
+    parser.add_argument('-s', '--src', nargs='?', help='specify mdb folder')
+    parser.add_argument('-d', '--dst', nargs='?', help='specify output folder')
     args = parser.parse_args()
     return args
 
 if __name__ == '__main__':
     bcolors.printc(bcolors.BOLD, welcome_msg)
     args = cli_init()
+    tiny_mdb_env(args)
     tiny_mdb(args)
