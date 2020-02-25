@@ -11,6 +11,8 @@
 # Tiny Mdb
 > **Tiny Mdb**, simple tool for mdb data processing.
 
+[![Build Status](https://api.travis-ci.com/OSTnm/tiny_mdb.svg?branch=master)](https://travis-ci.com/OSTnm/tiny_mdb)
+
 Tiny Mdb generate csv based on mdb with builtin policies.
 
 | Platform                       | Test Result |

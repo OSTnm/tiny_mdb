@@ -2,7 +2,8 @@ import sys
 import os
 if sys.platform == 'win32':
     sys.path.append('thirdparty')
-    os.environ['PATH'] = os.environ['PATH'] + './mdbtools-win/'
+    os.environ['PATH'] = os.environ['PATH'] + ';.\\mdbtools-win\\'
+
 import functools
 import glob
 import shutil
